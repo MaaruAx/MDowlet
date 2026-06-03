@@ -1,0 +1,19 @@
+Coloca aquí los siguientes archivos .ttf de Barlow y Barlow Condensed.
+Descarga desde: https://fonts.google.com/specimen/Barlow
+                https://fonts.google.com/specimen/Barlow+Condensed
+
+Archivos necesarios (exactamente estos nombres):
+
+  Barlow-Regular.ttf          (weight 400)
+  Barlow-Medium.ttf           (weight 500)
+  Barlow-SemiBold.ttf         (weight 600)
+  Barlow-Bold.ttf             (weight 700)
+
+  BarlowCondensed-Medium.ttf  (weight 500)
+  BarlowCondensed-SemiBold.ttf (weight 600)
+  BarlowCondensed-Bold.ttf    (weight 700)
+
+En Google Fonts, al descargar la familia completa, los archivos vienen con
+exactamente estos nombres dentro del .zip.
+
+Si algún archivo falta, el CSS cae en fallback a 'Segoe UI' / system-ui.
