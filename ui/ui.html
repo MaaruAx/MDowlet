@@ -308,6 +308,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
         <div class="cdd" id="cdd-v-codec"><div class="cdd-trigger" onclick="cddToggle('cdd-v-codec')"><span class="cdd-val" data-i="lbl_copy"></span><div class="cdd-arrow"></div></div>
           <div class="cdd-menu"><div class="cdd-inner"><div class="cdd-opt selected" data-val="copy" data-i="lbl_copy"></div><div class="cdd-opt" data-val="libx264">H.264</div><div class="cdd-opt" data-val="libx265">H.265/HEVC</div><div class="cdd-opt" data-val="libvpx-vp9">VP9</div><div class="cdd-opt" data-val="libaom-av1">AV1</div><div class="cdd-opt" data-val="prores_ks">ProRes</div><div class="cdd-opt" data-val="dnxhd">DNxHD</div><div class="cdd-opt" data-val="png">PNG codec</div><div class="cdd-opt" data-val="libwebp">WebP codec</div><div class="cdd-opt" data-val="none" data-i="lbl_novideo"></div></div></div></div>
       </div>
+      <div class="full"><span class="lbl">Aceleración GPU</span>
+        <div class="cdd" id="cdd-hw-accel"><div class="cdd-trigger" onclick="cddToggle('cdd-hw-accel')"><span class="cdd-val">CPU (Software)</span><div class="cdd-arrow"></div></div>
+          <div class="cdd-menu"><div class="cdd-inner" id="hw-accel-opts"><div class="cdd-opt selected" data-val="none">CPU (Software)</div></div></div></div>
+      </div>
       <div class="full"><span class="lbl" data-i="lbl_resolution"></span>
         <div class="cdd" id="cdd-resolution"><div class="cdd-trigger" onclick="cddToggle('cdd-resolution')"><span class="cdd-val" data-i="lbl_original"></span><div class="cdd-arrow"></div></div>
           <div class="cdd-menu"><div class="cdd-inner"><div class="cdd-opt selected" data-val="original" data-i="lbl_original"></div><div class="cdd-opt" data-val="3840">4K</div><div class="cdd-opt" data-val="2560">2K</div><div class="cdd-opt" data-val="1920">1080p</div><div class="cdd-opt" data-val="1280">720p</div><div class="cdd-opt" data-val="854">480p</div></div></div></div>
@@ -339,6 +343,13 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     <div><span class="lbl" data-i="lbl_re_output"></span>
       <div style="display:flex;gap:5px;align-items:center;"><input type="text" id="re-out-dir-input" readonly style="flex:1;cursor:pointer;font-size:10px;color:var(--tx2);" onclick="browseReOutputDir()"><button class="btn-s btn-sm" onclick="browseReOutputDir()" data-i="btn_browse"></button></div>
     </div>
+    <div style="border-top:1px solid var(--bd);padding-top:9px;margin-top:5px;">
+      <span class="lbl" style="margin-bottom:6px;display:block;">Archivo original</span>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px;cursor:pointer;font-size:11px;"><input type="radio" name="orig-action" value="keep" checked style="accent-color:var(--ac);"><span style="color:var(--tx2);">Conservar original</span></label>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px;cursor:pointer;font-size:11px;"><input type="radio" name="orig-action" value="trash" style="accent-color:var(--ac);"><span style="color:var(--tx2);">Mover a papelera</span></label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;"><input type="radio" name="orig-action" value="delete" style="accent-color:var(--ac);"><span style="color:var(--tx2);">Eliminar original</span></label>
+    </div>
+    <button class="btn-p" style="margin-top:10px;width:100%;justify-content:center;" onclick="startLocalReencode()">&#9658; Iniciar recodificación</button>
   </div></div>
 
   <div id="right-panel">
@@ -433,6 +444,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
     <div class="s-row" style="flex-direction:column;align-items:stretch;gap:5px;"><div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:10px;color:var(--tx2);font-weight:700;text-transform:uppercase;" data-i="lbl_output"></span><button class="btn-s btn-sm" onclick="clearLog('ffmpeg-log')" data-i="btn_clear_log"></button></div><div class="log-box" id="ffmpeg-log"></div></div>
   </div>
 
+
+  <div class="s-section"><div class="s-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Rendimiento</div>
+    <div class="s-row"><div class="s-label"><span>Renderizado con GPU</span><small>Desactiva si la interfaz parpadea o tiene artefactos. Requiere reinicio.</small></div><div class="toggle" id="toggle-gpu" onclick="toggleGpuRendering()"></div></div>
+  </div>
   <div class="s-section s-collapsible" id="sec-personaliz">
     <div class="s-head" onclick="toggleCollapsible('sec-personaliz')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg><span data-i="cfg_personalization"></span></div>
     <div class="s-collapsible-body">

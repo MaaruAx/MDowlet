@@ -235,7 +235,7 @@ function importTheme(input){
 }
 
 /* ── pyCall ──────────────────────────────────────────────────── */
-var STATE={queue:[],resolveOk:false,outputDir:'',reOutDir:'',activeView:'dl',reOpen:false,audioOnly:false,audioFmt:'mp3',audioBr:'192k'};
+var STATE={queue:[],resolveOk:false,outputDir:'',reOutDir:'',activeView:'dl',reOpen:false,reEnabled:false,audioOnly:false,audioFmt:'mp3',audioBr:'192k',audioSettingsOpen:false,_fetchDuration:0,_fetchThumb:'',_lastFetchUrl:'',_fetchTimer:null};
 /* ── QWebChannel bridge ──────────────────────────────────── */
 var _api=null;
 function pyCall(method){
@@ -379,6 +379,31 @@ function selectAudioFmt(fmt){STATE.audioFmt=fmt;document.querySelectorAll('.audi
 function selectAudioBr(br){STATE.audioBr=br;document.querySelectorAll('.audio-br-btn').forEach(function(b){b.classList.toggle('active',b.getAttribute('data-br')===br);});pyCall('save_pref','audio_br',br);}
 
 /* ── Re panel ─────────────────────────────────────────────────── */
+function _mapHwCodec(softCodec,hw){
+  if(!hw||hw==='none')return softCodec;
+  var m={nvenc:{libx264:'h264_nvenc',libx265:'hevc_nvenc','libaom-av1':'av1_nvenc'},amf:{libx264:'h264_amf',libx265:'hevc_amf'},qsv:{libx264:'h264_qsv',libx265:'hevc_qsv','libaom-av1':'av1_qsv'},vt:{libx264:'h264_videotoolbox',libx265:'hevc_videotoolbox'}};
+  var vendor=hw.split('_').pop();
+  return (m[vendor]||{})[softCodec]||softCodec;
+}
+function startLocalReencode(){
+  var zone=document.getElementById('re-drop-zone');
+  var filePath=zone?zone.getAttribute('data-file'):'';
+  if(!filePath){toast('Selecciona un archivo primero','err');return;}
+  var s=collectSettings(true);s.reencode=true;
+  pyCall('add_local_file',filePath,s).then(function(r){
+    if(r.ok){toast(t('msg_file_added'),'ok');if(zone)zone.removeAttribute('data-file');}
+    else toast(r.error||t('msg_file_error'),'err');
+  });
+}
+function toggleGpuRendering(){
+  var tog=document.getElementById('toggle-gpu');
+  if(!tog)return;
+  tog.classList.toggle('on');
+  var val=tog.classList.contains('on');
+  pyCall('save_pref','use_gpu_rendering',JSON.stringify(val));
+  toast((val?'GPU activada':'GPU desactivada')+' — reinicia para aplicar','inf');
+}
+
 function toggleReEnabled(){
   var tog=document.getElementById('re-toggle');
   tog.classList.toggle('on');
@@ -726,12 +751,16 @@ var _preCompactW=0,_preCompactH=0;
 function enterCompact(){
   _preCompactW=window.outerWidth||window.innerWidth||1140;
   _preCompactH=window.outerHeight||window.innerHeight||720;
+  pyCall('save_pref','pre_compact_w',String(_preCompactW));
+  pyCall('save_pref','pre_compact_h',String(_preCompactH));
+  pyCall('save_pref','compact_active',JSON.stringify(true));
   document.getElementById('compact-wrap').classList.add('show');
   pyCall('resize_window',320,520);
   updateSbInfo();
 }
 function exitCompact(){
   document.getElementById('compact-wrap').classList.remove('show');
+  pyCall('save_pref','compact_active',JSON.stringify(false));
   pyCall('resize_window',
     _preCompactW>100?_preCompactW:1140,
     _preCompactH>100?_preCompactH:720);
@@ -925,6 +954,21 @@ document.addEventListener('DOMContentLoaded',function(){
     var vb=document.getElementById('ver-badge');if(vb){vb.style.borderColor='var(--ac)';vb.style.color='var(--ac)';}
     // Auto updates
     STATE.autoUpdates=s.auto_updates;
+    // GPU rendering toggle state
+    if(s.use_gpu_rendering!==false){
+      var gt=document.getElementById('toggle-gpu');if(gt)gt.classList.add('on');
+    }
+    // Load available hw encoders for the GPU acceleration dropdown
+    pyCall('check_hw_encoders').then(function(r){
+      if(!r||!r.ok)return;
+      var menu=document.getElementById('hw-accel-opts');if(!menu)return;
+      Object.entries(r.encoders).forEach(function(pair){
+        if(!pair[1].available)return;
+        var d=document.createElement('div');
+        d.className='cdd-opt';d.setAttribute('data-val',pair[0]);
+        d.textContent=pair[1].label;menu.appendChild(d);
+      });
+    });
     return pyCall('get_queue_json');
   }).then(function(q){
     STATE.queue=Array.isArray(q)?q:[];renderQueue();updateSbInfo();

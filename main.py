@@ -9,9 +9,27 @@ import sys, threading, traceback, uuid, webbrowser
 from pathlib import Path
 from urllib.parse import urlparse
 
-import os as _os_early
-_os_early.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --disable-gpu-compositing"
 from platformdirs import user_data_dir, user_config_dir
+
+def _apply_gpu_pref() -> None:
+    """Read GPU pref from disk before Qt starts. Called at module level."""
+    try:
+        import json as _j
+        from pathlib import Path as _P
+        p = _P(user_config_dir('MDowlet','MDowlet')) / 'prefs.json'
+        if p.exists():
+            use_gpu = _j.loads(p.read_text(encoding='utf-8')).get('use_gpu_rendering', True)
+            if not use_gpu:
+                import os as _oe
+                _oe.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = '--disable-gpu --disable-gpu-compositing'
+                return
+    except Exception:
+        pass
+    # GPU enabled — clear any flag that was set (allow system default)
+    import os as _oe
+    _oe.environ.pop('QTWEBENGINE_CHROMIUM_FLAGS', None)
+
+_apply_gpu_pref()
 from PySide6.QtCore import QFile, QObject, QTimer, Signal, Slot
 from PySide6.QtGui import QIcon
 from PySide6.QtWebChannel import QWebChannel
@@ -748,6 +766,34 @@ class API(QObject):
         except Exception as e:
             return json.dumps({"ok":False,"error":str(e)})
 
+
+    @safe_slot
+    @Slot(result=str)
+    def check_hw_encoders(self) -> str:
+        """Detect which hardware video encoders ffmpeg supports on this machine."""
+        CANDIDATES = [
+            ('h264_nvenc',        'NVIDIA NVENC — H.264'),
+            ('hevc_nvenc',        'NVIDIA NVENC — H.265'),
+            ('h264_amf',          'AMD AMF — H.264'),
+            ('hevc_amf',          'AMD AMF — H.265'),
+            ('h264_qsv',          'Intel QSV — H.264'),
+            ('hevc_qsv',          'Intel QSV — H.265'),
+            ('h264_videotoolbox', 'Apple VideoToolbox — H.264'),
+            ('hevc_videotoolbox', 'Apple VideoToolbox — H.265'),
+        ]
+        try:
+            r = subprocess.run(
+                [_ff(), '-hide_banner', '-encoders'],
+                capture_output=True, text=True, timeout=10,
+                env=FFMPEG_ENV, **_popen_kwargs()
+            )
+            out = r.stdout or ''
+            encoders = {name: {'label': label, 'available': name in out}
+                        for name, label in CANDIDATES}
+            return json.dumps({'ok': True, 'encoders': encoders})
+        except Exception as e:
+            return json.dumps({'ok': False, 'error': str(e), 'encoders': {}})
+
     # ── Queue runner (identical to original) ──────────────────────────────────
     def _run_queue(self):
         self._processing = True
@@ -896,6 +942,15 @@ class API(QObject):
             proc.wait()
             if proc.returncode != 0: raise RuntimeError(f"FFmpeg terminó con código {proc.returncode}")
             item["output_path"] = out_file
+            # Handle original file
+            action = s.get('original_file_action', 'keep')
+            if action != 'keep' and input_file and os.path.exists(input_file) and input_file != out_file:
+                if action == 'trash':
+                    self._trash_file(input_file)
+                    log.info("Sent to trash: %s", input_file)
+                elif action == 'delete':
+                    try: os.remove(input_file); log.info("Deleted original: %s", input_file)
+                    except Exception as e: log.warning("Delete original failed: %s", e)
         except Exception as e: self._fail(item, f"Recodificación: {e}")
 
     def _push(self, item): self._emit("item_updated", self._pub(item))
@@ -905,6 +960,39 @@ class API(QObject):
     def _pub(self, item): return {k:v for k,v in item.items() if not k.startswith("_") and k!="settings"}
     def _pub_all(self):
         with self._lock: return [self._pub(self.queue[i]) for i in self.queue_order if i in self.queue]
+    @staticmethod
+    def _trash_file(path: str) -> bool:
+        """Send file to OS trash. Falls back to delete if trash unavailable."""
+        try:
+            import send2trash
+            send2trash.send2trash(path)
+            return True
+        except ImportError:
+            pass
+        except Exception as e:
+            log.warning("send2trash failed: %s", e)
+            return False
+        # Fallback: platform-specific
+        try:
+            if SYSTEM == 'Windows':
+                import ctypes, ctypes.wintypes
+                class _SHFOP(ctypes.Structure):
+                    _fields_ = [('hwnd',ctypes.c_void_p),('wFunc',ctypes.c_uint),
+                                ('pFrom',ctypes.c_wchar_p),('pTo',ctypes.c_wchar_p),
+                                ('fFlags',ctypes.c_ushort),('fAnyOpsAborted',ctypes.c_bool),
+                                ('hNameMappings',ctypes.c_void_p),('lpszProgressTitle',ctypes.c_wchar_p)]
+                op = _SHFOP(wFunc=3, pFrom=path+'\0', fFlags=0x0040)  # FO_DELETE | FOF_ALLOWUNDO
+                ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+            elif SYSTEM == 'Darwin':
+                subprocess.run(['osascript','-e',f'tell app "Finder" to delete POSIX file "{path}"'], timeout=8)
+            else:
+                subprocess.run(['gio','trash',path], timeout=8)
+            return True
+        except Exception as e:
+            log.warning("Trash fallback failed, deleting: %s", e)
+            try: os.remove(path); return True
+            except Exception: return False
+
     @staticmethod
     def _duration(filepath):
         try:
@@ -949,7 +1037,15 @@ class MainWindow(QMainWindow):
         self._prefs = prefs; self._api = api
         self.setWindowTitle("MDowlet")
         self.setMinimumSize(340, 500)
-        w = prefs.get('win_w', 1140); h = prefs.get('win_h', 720)
+        if prefs.get('compact_active'):
+            # Closed while in compact mode — restore pre-compact dimensions
+            w = int(prefs.get('pre_compact_w') or 1140)
+            h = int(prefs.get('pre_compact_h') or 720)
+            self._prefs['compact_active'] = False
+            _save_prefs(self._prefs)
+            log.debug("Compact was active — restoring pre-compact size %dx%d", w, h)
+        else:
+            w = prefs.get('win_w', 1140); h = prefs.get('win_h', 720)
         self.resize(w, h)
         log.debug("Window size: %dx%d", w, h)
 
