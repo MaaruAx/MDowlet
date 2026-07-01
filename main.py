@@ -71,18 +71,9 @@ _ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[()][0-9A-Z
 def _strip_ansi(text):
     return _ANSI_RE.sub('', text or '').replace('\r\n','\n').strip()
 
-# ── Resolve paths ─────────────────────────────────────────────────────────────
-def _add_resolve_paths():
-    for base in [
-        os.environ.get("RESOLVE_SCRIPT_API",""),
-        r"C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\Developer\Scripting",
-        "/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/Scripting",
-        "/opt/resolve/Developer/Scripting",
-    ]:
-        if not base: continue
-        m = os.path.join(base,"Modules")
-        if os.path.isdir(m) and m not in sys.path: sys.path.insert(0,m)
-_add_resolve_paths()
+import resolve_bridge
+import cookies_manager
+resolve_bridge.add_resolve_script_paths()
 
 # ── ffmpeg environment (original logic preserved) ─────────────────────────────
 def _build_ffmpeg_env():
@@ -499,7 +490,7 @@ class API(QObject):
         webbrowser.open("https://ffmpeg.org/download.html")
         return json.dumps({"ok": True})
 
-    # ── Resolve ───────────────────────────────────────────────────────────────
+    # ── Resolve (lógica delegada a resolve_bridge.py; sin UI activa) ────────────
     @safe_slot
     @Slot(result=str)
     def check_resolve(self):
@@ -510,15 +501,8 @@ class API(QObject):
 
     def _update_resolve_cache(self):
         self._resolve_updating = True
-        result = {"ok": False}
-        try:
-            import DaVinciResolveScript as dvr
-            resolve = dvr.scriptapp("Resolve")
-            if resolve:
-                proj = resolve.GetProjectManager().GetCurrentProject()
-                result = {"ok": True, "project": proj.GetName() if proj else None}
-        except Exception: pass
-        finally: self._resolve_updating = False
+        result = resolve_bridge.check_resolve_connection()
+        self._resolve_updating = False
         with self._resolve_lock: self._resolve_cache = result
         self._emit("resolve_update", result)
 
@@ -528,21 +512,7 @@ class API(QObject):
         item = self.queue.get(item_id)
         if not item or not item.get("output_path"):
             return json.dumps({"ok": False, "error": "Archivo no disponible"})
-        path = os.path.abspath(item["output_path"])
-        if not os.path.exists(path):
-            return json.dumps({"ok": False, "error": "Archivo no encontrado en disco"})
-        try:
-            import DaVinciResolveScript as dvr
-            resolve = dvr.scriptapp("Resolve")
-            if not resolve: return json.dumps({"ok": False, "error": "Resolve no está abierto"})
-            proj = resolve.GetProjectManager().GetCurrentProject()
-            if not proj: return json.dumps({"ok": False, "error": "Sin proyecto activo"})
-            result = proj.GetMediaPool().ImportMedia([path])
-            return json.dumps({"ok": bool(result)})
-        except ImportError:
-            return json.dumps({"ok": False, "error": "API de Resolve no disponible"})
-        except Exception as e:
-            return json.dumps({"ok": False, "error": str(e)})
+        return json.dumps(resolve_bridge.send_path_to_resolve(item["output_path"]))
 
     @safe_slot
     @Slot(result=str)
@@ -550,11 +520,8 @@ class API(QObject):
         with self._lock:
             targets = [self.queue[i] for i in self.queue_order
                        if self.queue[i]["status"]=="done" and self.queue[i].get("output_path")]
-        sent = 0
-        for item in targets:
-            r = json.loads(self.send_to_resolve(item["id"]))
-            if r.get("ok"): sent += 1
-        return json.dumps({"ok": True, "sent": sent, "total": len(targets)})
+        result = resolve_bridge.send_many_to_resolve([t["output_path"] for t in targets])
+        return json.dumps(result)
 
     # ── Formats ───────────────────────────────────────────────────────────────
     @safe_slot
@@ -680,13 +647,10 @@ class API(QObject):
     @safe_slot
     @Slot(result=str)
     def browse_cookies_file(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self._window, "Archivo de cookies", "",
-            "Cookies (*.txt);;Todos los archivos (*.*)")
-        if path:
-            self._prefs['cookies_file'] = path; _save_prefs(self._prefs)
-            return json.dumps({"ok": True, "path": path})
-        return json.dumps({"ok": False})
+        result = cookies_manager.pick_cookies_file(self._window)
+        if result.get("ok"):
+            self._prefs['cookies_file'] = result['path']; _save_prefs(self._prefs)
+        return json.dumps(result)
 
     @safe_slot
     @Slot(result=str)
@@ -864,8 +828,7 @@ class API(QObject):
             elif d["status"] == "finished": final_path[0] = d.get("filename")
         opts = {"format":dl_format,"outtmpl":out_tmpl,"progress_hooks":[hook],
                 "quiet":True,"no_warnings":True,"merge_output_format":"mp4"}
-        cookies_file = self._prefs.get('cookies_file','')
-        if cookies_file and os.path.isfile(cookies_file): opts["cookiefile"] = cookies_file
+        cookies_manager.apply_cookies_to_opts(opts, self._prefs)
         if s.get("audio_only"):
             abr = s.get("audio_bitrate","")
             if abr:
